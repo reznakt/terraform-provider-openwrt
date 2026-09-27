@@ -54,7 +54,7 @@ buildGoModule {
 
   meta = {
     description = "Terraform/OpenTofu provider for OpenWrt";
-    license = lib.licenses.mpl20;
+    license = lib.licenses.mit;
     mainProgram = "terraform-provider-openwrt";
   };
 }
