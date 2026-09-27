@@ -16,7 +16,7 @@ dd if="$out" of=root.ext4 bs=512 skip="$start" count="$size" status=none
 
 cmds=("cd /usr/share/rpcd/acl.d")
 for acl in "$@"; do
-	name=$(basename "$acl" | sed 's/^[a-z0-9]*-//')  # strip the store hash prefix
+	name=$(basename "$acl" | sed 's/^[a-z0-9]*-//') # strip the store hash prefix
 	install -m644 "$acl" "$name"
 	cmds+=("write $name $name")
 done

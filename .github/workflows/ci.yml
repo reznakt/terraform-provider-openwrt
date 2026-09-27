@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint, docs and examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix develop -c just lint
+      - run: nix develop -c just docs-check
+      - run: nix develop -c just examples
+
+  test:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # Builds the provider with a fresh vendor hash and runs `go test`
+      # (including the OpenTofu-driven tests) in the sandbox.
+      - run: nix flake check -L
+
+  acceptance:
+    name: Acceptance tests (OpenWrt VM)
+    runs-on: ubuntu-latest
+    env:
+      OPENWRT_VM_DIR: ${{ runner.temp }}/openwrt-vm
+      OPENWRT_ACC_PACKAGES: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix develop -c just acc
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-vm-console
+          path: ${{ runner.temp }}/openwrt-vm/*.log

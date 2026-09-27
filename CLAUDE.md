@@ -6,24 +6,25 @@ Terraform/OpenTofu provider (terraform-plugin-framework, protocol 6) that manage
 
 ## Commands
 
-Everything runs inside `nix develop` (Go, OpenTofu, golangci-lint, tfplugindocs, MkDocs, VM helpers; it also exports the `TF_ACC_*` variables the tests need).
+Everything runs inside `nix develop` (Go, OpenTofu, just, treefmt, golangci-lint, shellcheck, tfplugindocs, MkDocs, VM helpers; it also exports the `TF_ACC_*` variables the tests need). Tasks are in the `justfile`:
 
 ```sh
-go test ./...                                   # unit tests + OpenTofu-driven tests against the in-memory fake router
-go test ./internal/provider -run TestDHCPHostLifecycle -v   # one test
-golangci-lint run ./...
-nix run .#test-acc                              # TestAcc* against a throwaway OpenWrt QEMU VM (boots, runs, stops it)
-nix run .#test-acc -- -run TestAccRollback      # extra args go to `go test`
-OPENWRT_ACC_PACKAGES=1 nix run .#test-acc -- -run TestAccPackage   # needs internet inside the VM
-nix run .#run-vm / .#stop-vm                    # VM by hand; endpoint http://127.0.0.1:18080, root, empty password
-./scripts/gen-docs.sh                           # regenerate docs/ (never edit docs/ by hand)
-nix build .#docs-site                           # strict MkDocs build of the GitHub Pages site
-nix flake check                                 # builds the provider and runs `go test` in the sandbox
+just test                     # unit tests + OpenTofu-driven tests against the in-memory fake router
+just test-one TestDHCPHost    # tests matching a pattern, verbose
+just acc                      # TestAcc* against a throwaway OpenWrt QEMU VM (boots, runs, stops it)
+just acc -run TestAccRollback # extra args go to `go test`; OPENWRT_ACC_PACKAGES=1 enables the package test
+just vm-up / just vm-down     # VM by hand: http://127.0.0.1:18080, root, empty password
+just fmt / just lint          # treefmt (gofmt, nixfmt, shfmt, tofu fmt); lint = format check + golangci-lint + shellcheck
+just docs / just docs-check   # regenerate docs/ (never edit it by hand) / fail if stale
+just examples                 # tofu validate examples/takeover against the working-tree provider
+just vendor-hash              # recompute vendorHash in nix/package.nix after go.mod/go.sum changes
+just check                    # lint + test + docs-check + examples + nix flake check (CI minus the VM)
 ```
 
 - `internal/provider` tests need a Terraform/OpenTofu binary via `TF_ACC_TERRAFORM_PATH` (set by the dev shell); they run without `TF_ACC`. Acceptance tests (`acc_test.go`) skip without `TF_ACC` and refuse any non-loopback `OPENWRT_ENDPOINT`.
-- After changing `go.mod`/`go.sum`, update `vendorHash` in `nix/package.nix`. A plain `nix build` can silently reuse the old cached vendor directory; verify with `nix build .#default.goModules --rebuild` (or a hash that was never built before).
-- After changing schemas, descriptions, `templates/` or `examples/`, rerun `./scripts/gen-docs.sh`; `docs/` is generated and committed, and Pages is rendered from it.
+- Never hand-edit `vendorHash`: a plain `nix build` silently reuses a cached vendor directory, so a stale hash can pass locally. `just vendor-hash` builds with `lib.fakeHash` to force a fresh download.
+- `scripts/with-dev-provider.sh <cmd>` builds the provider and runs `<cmd>` with an OpenTofu `dev_overrides` config; docs generation and example validation use it.
+- CI (`.github/workflows/ci.yml`): lint/docs/examples, `nix flake check`, and the VM acceptance suite (KVM enabled on the runner). `pages.yml` publishes `nix build .#docs-site`.
 
 ## Architecture
 

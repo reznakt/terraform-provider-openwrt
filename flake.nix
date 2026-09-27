@@ -19,12 +19,15 @@
           default = pkgs.callPackage ./nix/package.nix { };
           vm-image = pkgs.callPackage ./nix/vm-image.nix { };
           docs-site = pkgs.callPackage ./nix/docs-site.nix { };
+          treefmt = pkgs.callPackage ./nix/treefmt.nix { };
         }
         // pkgs.callPackages ./nix/vm.nix {
           inherit (own) vm-image;
           provider = own.default;
         }
       );
+
+      formatter = forAllSystems (_: own: own.treefmt);
 
       checks = forAllSystems (_: own: { provider = own.default.overrideAttrs { doCheck = true; }; });
 
@@ -33,6 +36,9 @@
           default = pkgs.mkShell {
             inputsFrom = [ own.default ];
             packages = [
+              pkgs.just
+              own.treefmt
+              pkgs.shellcheck
               pkgs.gopls
               pkgs.golangci-lint
               pkgs.terraform-plugin-docs

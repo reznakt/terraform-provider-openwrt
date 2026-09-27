@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Runs the TestAcc* suite against a throwaway VM. Extra arguments are passed
 # to `go test`, e.g. `test-acc -run TestAccRollback`.
 
