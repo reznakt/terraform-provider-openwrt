@@ -29,7 +29,7 @@ buildGoModule {
       ../internal
     ];
   };
-  vendorHash = "sha256-PYlTLBH6iBR0fMk0Yt4kS4ua92hA5clAFV9QXftkhPk=";
+  vendorHash = "sha256-kjIpsM2xlz/mlNjveSBpiWRzhoDrjAWpfikCvzGnfA8=";
 
   subPackages = [ "." ];
   ldflags = [
