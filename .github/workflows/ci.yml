@@ -39,9 +39,6 @@ jobs:
   acceptance:
     name: Acceptance tests (OpenWrt VM)
     runs-on: ubuntu-latest
-    env:
-      OPENWRT_VM_DIR: ${{ runner.temp }}/openwrt-vm
-      OPENWRT_ACC_PACKAGES: "1"
     steps:
       - uses: actions/checkout@v5
       - name: Enable KVM
@@ -52,6 +49,10 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - run: nix develop -c just acc
+        env:
+          # The runner context is only available at step level.
+          OPENWRT_VM_DIR: ${{ runner.temp }}/openwrt-vm
+          OPENWRT_ACC_PACKAGES: "1"
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

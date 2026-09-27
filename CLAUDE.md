@@ -6,7 +6,7 @@ Terraform/OpenTofu provider (terraform-plugin-framework, protocol 6) that manage
 
 ## Commands
 
-Everything runs inside `nix develop` (Go, OpenTofu, just, treefmt, golangci-lint, shellcheck, tfplugindocs, MkDocs, VM helpers; it also exports the `TF_ACC_*` variables the tests need). Tasks are in the `justfile`:
+Everything runs inside `nix develop` (Go, OpenTofu, just, treefmt, golangci-lint, shellcheck, actionlint, tfplugindocs, MkDocs, VM helpers; it also exports the `TF_ACC_*` variables the tests need). Tasks are in the `justfile`:
 
 ```sh
 just test                     # unit tests + OpenTofu-driven tests against the in-memory fake router
@@ -14,7 +14,7 @@ just test-one TestDHCPHost    # tests matching a pattern, verbose
 just acc                      # TestAcc* against a throwaway OpenWrt QEMU VM (boots, runs, stops it)
 just acc -run TestAccRollback # extra args go to `go test`; OPENWRT_ACC_PACKAGES=1 enables the package test
 just vm-up / just vm-down     # VM by hand: http://127.0.0.1:18080, root, empty password
-just fmt / just lint          # treefmt (gofmt, nixfmt, shfmt, tofu fmt); lint = format check + golangci-lint + shellcheck
+just fmt / just lint          # treefmt (gofmt, nixfmt, shfmt, tofu fmt); lint = format check + golangci-lint + shellcheck + actionlint
 just docs / just docs-check   # regenerate docs/ (never edit it by hand) / fail if stale
 just examples                 # tofu validate examples/takeover against the working-tree provider
 just vendor-hash              # recompute vendorHash in nix/package.nix after go.mod/go.sum changes

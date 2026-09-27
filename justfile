@@ -33,11 +33,12 @@ vm-down:
 fmt:
     treefmt
 
-# Linters and formatting check
+# Linters, formatting check and workflow lint
 lint:
     treefmt --fail-on-change
     golangci-lint run ./...
     shellcheck scripts/*.sh nix/*.sh
+    actionlint
 
 # Regenerate docs/ from the provider schema, templates/ and examples/
 docs:

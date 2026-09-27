@@ -165,7 +165,7 @@ Everything runs in `nix develop`; tasks live in the [`justfile`](justfile):
 | `just test` | unit tests + real OpenTofu runs against an in-memory fake router |
 | `just test-one TestDHCPHost` | a single test |
 | `just acc` | acceptance tests against a throwaway **OpenWrt VM** (QEMU, KVM when available) |
-| `just lint` | treefmt check, golangci-lint, shellcheck |
+| `just lint` | treefmt check, golangci-lint, shellcheck, actionlint |
 | `just fmt` | format Go, Nix, shell and HCL (also `nix fmt`) |
 | `just docs` | regenerate `docs/` from the schema, templates and examples |
 | `just vendor-hash` | recompute the Nix `vendorHash` after dependency changes |

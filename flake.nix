@@ -39,6 +39,7 @@
               pkgs.just
               own.treefmt
               pkgs.shellcheck
+              pkgs.actionlint
               pkgs.gopls
               pkgs.golangci-lint
               pkgs.terraform-plugin-docs
