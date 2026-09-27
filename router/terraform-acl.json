@@ -1,0 +1,36 @@
+{
+	"terraform": {
+		"description": "Access for terraform-provider-openwrt",
+		"read": {
+			"ubus": {
+				"session": [ "access", "login" ],
+				"uci": [ "*" ],
+				"file": [ "read", "list", "stat", "md5" ],
+				"rc": [ "list" ],
+				"system": [ "board", "info" ],
+				"network.interface": [ "dump" ],
+				"network.wireless": [ "status" ],
+				"luci-rpc": [ "getDHCPLeases" ]
+			},
+			"uci": [ "*" ],
+			"file": {
+				"/etc/*": [ "read", "list" ],
+				"/usr/libexec/package-manager-call": [ "list" ],
+				"/usr/libexec/opkg-call": [ "list" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"uci": [ "*" ],
+				"file": [ "write", "remove", "exec" ],
+				"rc": [ "init" ]
+			},
+			"uci": [ "*" ],
+			"file": {
+				"/etc/*": [ "write" ],
+				"/usr/libexec/package-manager-call": [ "exec" ],
+				"/usr/libexec/opkg-call": [ "exec" ]
+			}
+		}
+	}
+}

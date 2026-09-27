@@ -1,0 +1,8 @@
+.direnv/
+/terraform-provider-openwrt
+/result*
+.terraform/
+*.tfstate*
+.terraform.lock.hcl
+*.tfvars
+/site/

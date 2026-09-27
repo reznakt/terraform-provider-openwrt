@@ -1,0 +1,1 @@
+tofu import openwrt_wireless_iface.home default_radio0

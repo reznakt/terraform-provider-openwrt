@@ -1,0 +1,47 @@
+---
+page_title: "OpenWrt Provider"
+description: |-
+  Manage OpenWrt routers declaratively through ubus JSON-RPC, with automatic rollback.
+---
+
+# OpenWrt Provider
+
+Manages OpenWrt routers through the ubus JSON-RPC API that uhttpd serves at
+`/ubus` (the same API LuCI uses). No agent, no SSH.
+
+* **Typed resources** for network, wireless, firewall, DHCP/DNS, system and
+  services, with validation and import, plus `openwrt_uci_section` for any
+  other UCI section.
+* **Rollback protection**: every change is applied with `uci apply` and a
+  rollback timer. The provider confirms it over a fresh connection; if the
+  change cut off access (wrong LAN address, firewall, uhttpd settings), the
+  router reverts on its own and the resource fails with `change rolled back`.
+* **Secrets** never appear in plan output, and with the `*_wo` write-only
+  attributes never in state either. See the [secrets guide](guides/secrets.md).
+
+## Requirements
+
+* OpenWrt with LuCI; tested with 24.10 (it brings `uhttpd-mod-ubus`, `rpcd`,
+  `rpcd-mod-file` and `luci-app-package-manager`).
+* An rpcd login for the provider; see the [router setup guide](guides/router-setup.md).
+* Terraform or OpenTofu >= 1.11 for write-only attributes.
+
+## Semantics
+
+* A typed resource owns the options it declares: an attribute left unset
+  means the option is removed from the router. Options it does not declare
+  are left alone unless listed in `extra_options`/`extra_lists`.
+* `openwrt_uci_section` owns the whole section.
+* Sections that exist on every stock router (`openwrt_system`,
+  `openwrt_firewall_defaults`, `openwrt_dhcp_dnsmasq`, radios, ...) are
+  adopted on create and only forgotten on destroy.
+* Anonymous sections are imported as `@type[index]` and renamed to the
+  resource's `section` on the next apply.
+* Changes are serialized: the router supports only one pending rollback, so
+  each resource change is applied and confirmed on its own.
+
+## Example Usage
+
+{{ tffile "examples/provider/provider.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

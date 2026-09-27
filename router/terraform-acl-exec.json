@@ -1,0 +1,10 @@
+{
+	"terraform-exec": {
+		"description": "Lets terraform-provider-openwrt run shell commands (openwrt_exec). This is equivalent to root.",
+		"write": {
+			"file": {
+				"/bin/sh": [ "exec" ]
+			}
+		}
+	}
+}
