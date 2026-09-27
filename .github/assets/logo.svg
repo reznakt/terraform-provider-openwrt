@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="OpenWrt provider logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00B5E2"/>
+      <stop offset="1" stop-color="#7B42BC"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <g fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 70 30 40M88 70 98 40"/>
+    <rect x="22" y="70" width="84" height="32" rx="10"/>
+    <path d="M76 38a12 12 0 1 0-12 12"/>
+  </g>
+  <path d="M72 50 62 43.5v13z" fill="#fff"/>
+  <g fill="#fff">
+    <circle cx="42" cy="86" r="4.5"/>
+    <circle cx="56" cy="86" r="4.5"/>
+    <circle cx="70" cy="86" r="4.5" opacity=".55"/>
+  </g>
+</svg>
