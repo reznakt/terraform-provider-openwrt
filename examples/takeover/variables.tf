@@ -22,9 +22,3 @@ variable "wifi_key" {
   sensitive   = true
   ephemeral   = true
 }
-
-variable "wifi_key_version" {
-  description = "Bump after changing wifi_key so the new key is sent."
-  type        = number
-  default     = 1
-}

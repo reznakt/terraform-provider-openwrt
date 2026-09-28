@@ -38,12 +38,17 @@ type fileModel struct {
 	Content       types.String `tfsdk:"content"`
 	ContentBase64 types.String `tfsdk:"content_base64"`
 	Source        types.String `tfsdk:"source"`
+	SensitiveSrc  types.String `tfsdk:"sensitive_source"`
 	ContentWO     types.String `tfsdk:"content_wo"`
 	ContentWOVer  types.Int64  `tfsdk:"content_wo_version"`
 	MD5           types.String `tfsdk:"md5"`
 }
 
-var contentAttrs = []string{"content", "content_base64", "source", "content_wo"}
+var contentAttrs = []string{"content", "content_base64", "source", "sensitive_source", "content_wo"}
+
+// secret reports whether the content is kept out of state (content_wo or
+// sensitive_source), with only a salted fingerprint in private state.
+func (m *fileModel) secret() bool { return !m.ContentWO.IsNull() || !m.SensitiveSrc.IsNull() }
 
 func (r *fileResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_file"
@@ -63,8 +68,9 @@ func (r *fileResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		}
 		return []validator.String{stringvalidator.ExactlyOneOf(others...)}
 	}
-	desc := "Manages a file on the router through rpcd-mod-file. Exactly one of `content`, `content_base64`, `source` or `content_wo` is required. " +
+	desc := "Manages a file on the router through rpcd-mod-file. Exactly one of `content`, `content_base64`, `source`, `sensitive_source` or `content_wo` is required. " +
 		"Drift is detected by comparing the router's MD5 with the expected one, so file bodies are only kept in state when you use `content`/`content_base64`. " +
+		"With `content_wo` or `sensitive_source` not even the MD5 is stored; a salted fingerprint in private state detects drift instead. " +
 		"Requires an rpcd ACL granting read/write on the path (see the bootstrap guide)."
 	resp.Schema = schema.Schema{
 		Description: desc, MarkdownDescription: desc,
@@ -82,17 +88,26 @@ func (r *fileResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			},
 			"content":        schema.StringAttribute{Optional: true, Sensitive: true, Description: "UTF-8 content (stored in state, hidden in plans).", Validators: exactlyOne("content")},
 			"content_base64": schema.StringAttribute{Optional: true, Sensitive: true, Description: "Base64 content for binary files (stored in state, hidden in plans).", Validators: exactlyOne("content_base64")},
-			"source":         schema.StringAttribute{Optional: true, Description: "Local file to upload. Only its MD5 is kept in state.", Validators: exactlyOne("source")},
+			"source":         schema.StringAttribute{Optional: true, Description: "Local file to upload. Only its MD5 is kept in state; use `sensitive_source` for secrets.", Validators: exactlyOne("source")},
+			"sensitive_source": schema.StringAttribute{
+				Optional:    true,
+				Description: "Local secret file to upload, e.g. one decrypted by sops-nix or agenix. Only the path is kept in state, not even the MD5; the file is uploaded again whenever it changes.",
+				Validators:  exactlyOne("sensitive_source"),
+			},
 			"content_wo": schema.StringAttribute{
 				Optional: true, Sensitive: true, WriteOnly: true,
-				Description: "Write-only content, never stored in state or plan. Sent when `content_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.",
-				Validators:  append(exactlyOne("content_wo"), stringvalidator.AlsoRequires(path.MatchRoot("content_wo_version"))),
+				Description: "Write-only content, never stored in state or plan. Uploaded again whenever it changes. Requires Terraform/OpenTofu >= 1.11.",
+				Validators:  exactlyOne("content_wo"),
 			},
 			"content_wo_version": schema.Int64Attribute{
-				Optional: true, Description: "Bump to re-send `content_wo`. Cleared automatically when the file on the router changes.",
-				Validators: []validator.Int64{int64validator.AlsoRequires(path.MatchRoot("content_wo"))},
+				Optional: true, Computed: true,
+				Description: "Version of the content sent from `content_wo` or `sensitive_source`. Leave it unset and the provider bumps it whenever the content changes or the file on the router drifts; set it to upload only on explicit bumps.",
+				Validators: []validator.Int64{int64validator.Any(
+					int64validator.AlsoRequires(path.MatchRoot("content_wo")),
+					int64validator.AlsoRequires(path.MatchRoot("sensitive_source")),
+				)},
 			},
-			"md5": schema.StringAttribute{Computed: true, Description: "MD5 of the file on the router (null with `content_wo`, so no fingerprint of a secret ends up in state)."},
+			"md5": schema.StringAttribute{Computed: true, Description: "MD5 of the file on the router (null with `content_wo` or `sensitive_source`, so no fingerprint of a secret ends up in state)."},
 		},
 	}
 }
@@ -108,6 +123,9 @@ func desiredBytes(m *fileModel) ([]byte, bool, error) {
 	case !m.Source.IsNull():
 		b, err := os.ReadFile(m.Source.ValueString())
 		return b, false, err
+	case !m.SensitiveSrc.IsNull():
+		b, err := os.ReadFile(m.SensitiveSrc.ValueString())
+		return b, true, err
 	case !m.ContentWO.IsNull():
 		return []byte(m.ContentWO.ValueString()), true, nil
 	}
@@ -125,7 +143,8 @@ func parseMode(s string) int64 {
 }
 
 // ModifyPlan puts the expected MD5 into the plan so content drift on the
-// router, or a changed `source` file, shows up as a diff.
+// router, or a changed `source` file, shows up as a diff. Secret content
+// shows up as a new content_wo_version instead.
 func (r *fileResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
@@ -133,10 +152,33 @@ func (r *fileResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 	var cfg, plan fileModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() || cfg.Content.IsUnknown() || cfg.ContentBase64.IsUnknown() || cfg.Source.IsUnknown() {
+	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !cfg.ContentWO.IsNull() || !plan.ContentWOVer.IsNull() {
+	prior := types.Int64Null()
+	if !req.State.Raw.IsNull() {
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("content_wo_version"), &prior)...)
+	}
+	secret := cfg.secret()
+	known := !cfg.ContentWO.IsUnknown() && !cfg.SensitiveSrc.IsUnknown()
+	changed := false
+	if secret && known {
+		b, _, err := desiredBytes(&cfg)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("sensitive_source"), "Cannot read sensitive_source", err.Error())
+			return
+		}
+		wo, diags := loadWO(ctx, req.Private)
+		resp.Diagnostics.Append(diags...)
+		changed = wo.differs(map[string]string{"md5": md5hex(b)})
+	}
+	ver := planWOVersion(cfg.ContentWOVer, prior, secret, known, changed, "content_wo_version", &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_wo_version"), ver)...)
+
+	if cfg.Content.IsUnknown() || cfg.ContentBase64.IsUnknown() || cfg.Source.IsUnknown() {
+		return
+	}
+	if secret {
 		plan.MD5 = types.StringNull()
 	} else if b, _, err := desiredBytes(&cfg); err == nil {
 		plan.MD5 = types.StringValue(md5hex(b))
@@ -192,9 +234,12 @@ func (r *fileResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 	wo, _ := loadWO(ctx, nil)
-	if !cfg.ContentWO.IsNull() {
+	if cfg.secret() {
 		wo.Hashes["md5"] = wo.fingerprint(sum)
 		plan.MD5 = types.StringNull()
+		if plan.ContentWOVer.IsUnknown() {
+			plan.ContentWOVer = types.Int64Value(1)
+		}
 	} else {
 		plan.MD5 = types.StringValue(sum)
 	}
@@ -249,11 +294,15 @@ func (r *fileResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	isWO := !cfg.ContentWO.IsNull()
+	isWO := cfg.secret()
 	wasWO := state.MD5.IsNull()
 	send := wasWO || !plan.MD5.Equal(state.MD5)
 	if isWO {
-		send = !wasWO || !plan.ContentWOVer.Equal(state.ContentWOVer)
+		send = !wasWO || plan.ContentWOVer.IsUnknown() || !plan.ContentWOVer.Equal(state.ContentWOVer)
+		if plan.ContentWOVer.IsUnknown() {
+			// The content was unknown at plan time; settle the version now.
+			plan.ContentWOVer = types.Int64Value(state.ContentWOVer.ValueInt64() + 1)
+		}
 	}
 	sum, err := r.write(ctx, &cfg, &plan, send)
 	if err != nil {

@@ -30,8 +30,9 @@ Manages a `login` section in `/etc/config/rpcd`.
 - `extra_lists` (Map of List of String) Additional list options not covered by this resource's attributes. Only listed keys are managed.
 - `extra_options` (Map of String) Additional scalar options not covered by this resource's attributes. Only listed keys are managed.
 - `password` (String, Sensitive) `$p$<user>` to use the system password, or a crypt hash (`$1$...`). (UCI option `password`.)
-- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `password`: never stored in state or plan. Sent when `password_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `password_wo_version` (Number) Bump to send a new `password_wo`. Also changes when the router's value drifts from the last one sent.
+- `password_file` (String) Path to a local file holding `password` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `password_wo` and sent again whenever the file changes.
+- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `password`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `password_wo_version` (Number) Version of the value sent from `password_wo` or `password_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.
 - `read` (List of String) ACL groups with read access (`*` for all). (UCI option `read`.)
 - `timeout` (Number) Session timeout in seconds. (UCI option `timeout`.)
 - `write` (List of String) ACL groups with write access (`*` for all). (UCI option `write`.)

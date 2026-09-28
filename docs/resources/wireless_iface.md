@@ -24,9 +24,20 @@ resource "openwrt_wireless_iface" "home" {
   ssid       = "home"
   encryption = "sae-mixed"
 
-  # Write-only: the key never appears in plan or state.
-  key_wo         = var.wifi_key
-  key_wo_version = 1
+  # Write-only: the key never appears in plan or state, and is sent again
+  # whenever var.wifi_key changes.
+  key_wo = var.wifi_key
+}
+
+# Or read the key from a local file, e.g. decrypted by sops-nix or agenix.
+resource "openwrt_wireless_iface" "guest" {
+  section    = "guest"
+  device     = "radio1"
+  mode       = "ap"
+  network    = ["lan"]
+  ssid       = "guest"
+  encryption = "psk2"
+  key_file   = "/run/secrets/openwrt/guest-wifi-key"
 }
 ```
 
@@ -45,8 +56,9 @@ resource "openwrt_wireless_iface" "home" {
 
 - `auth_port` (Number) RADIUS authentication port. (UCI option `auth_port`.)
 - `auth_secret` (String, Sensitive) RADIUS shared secret. (UCI option `auth_secret`.)
-- `auth_secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `auth_secret`: never stored in state or plan. Sent when `auth_secret_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `auth_secret_wo_version` (Number) Bump to send a new `auth_secret_wo`. Also changes when the router's value drifts from the last one sent.
+- `auth_secret_file` (String) Path to a local file holding `auth_secret` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `auth_secret_wo` and sent again whenever the file changes.
+- `auth_secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `auth_secret`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `auth_secret_wo_version` (Number) Version of the value sent from `auth_secret_wo` or `auth_secret_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.
 - `auth_server` (String) RADIUS authentication server. (UCI option `auth_server`.)
 - `bss_transition` (Boolean) Enable 802.11v BSS transition. (UCI option `bss_transition`.)
 - `bssid` (String) BSSID override (or target BSSID in sta mode). (UCI option `bssid`.)
@@ -66,8 +78,9 @@ resource "openwrt_wireless_iface" "home" {
 - `ifname` (String) Interface name override. (UCI option `ifname`.)
 - `isolate` (Boolean) Isolate clients from each other. (UCI option `isolate`.)
 - `key` (String, Sensitive) WPA passphrase or PSK. (UCI option `key`.)
-- `key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `key`: never stored in state or plan. Sent when `key_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `key_wo_version` (Number) Bump to send a new `key_wo`. Also changes when the router's value drifts from the last one sent.
+- `key_file` (String) Path to a local file holding `key` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `key_wo` and sent again whenever the file changes.
+- `key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `key`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `key_wo_version` (Number) Version of the value sent from `key_wo` or `key_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.
 - `macaddr` (String) MAC address override or `random`. (UCI option `macaddr`.)
 - `macfilter` (String) MAC filter policy. (UCI option `macfilter`.) One of: `disable`, `allow`, `deny`.
 - `maclist` (List of String) MAC addresses for the filter. (UCI option `maclist`.)
@@ -79,8 +92,9 @@ resource "openwrt_wireless_iface" "home" {
 - `network` (List of String) Logical interfaces to attach to. (UCI option `network`.)
 - `ocv` (Number) Operating channel validation. (UCI option `ocv`.)
 - `sae_password` (String, Sensitive) WPA3-SAE password when it differs from `key`. (UCI option `sae_password`.)
-- `sae_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `sae_password`: never stored in state or plan. Sent when `sae_password_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `sae_password_wo_version` (Number) Bump to send a new `sae_password_wo`. Also changes when the router's value drifts from the last one sent.
+- `sae_password_file` (String) Path to a local file holding `sae_password` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `sae_password_wo` and sent again whenever the file changes.
+- `sae_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `sae_password`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `sae_password_wo_version` (Number) Version of the value sent from `sae_password_wo` or `sae_password_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.
 - `ssid` (String) SSID. (UCI option `ssid`.)
 - `wds` (Boolean) Enable 4-address (WDS) mode. (UCI option `wds`.)
 - `wmm` (Boolean) Enable WMM. (UCI option `wmm`.)

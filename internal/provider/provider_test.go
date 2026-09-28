@@ -393,6 +393,172 @@ resource "openwrt_file" "motd" {
 	})
 }
 
+// writeSecret writes a secret file the way sops-nix or agenix would.
+func writeSecret(t *testing.T, name, value string) {
+	t.Helper()
+	if err := os.WriteFile(name, []byte(value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteOnlyTracksChangesWithoutVersion(t *testing.T) {
+	f := newFake(t)
+	cfg := func(psk string) string {
+		return providerBlock(f) + fmt.Sprintf(`
+resource "openwrt_wireless_iface" "home" {
+  section = "home"
+  device  = "radio0"
+  mode    = "ap"
+  ssid    = "home"
+  key_wo  = %q
+}
+`, psk)
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories(),
+		Steps: []resource.TestStep{
+			{
+				Config: cfg("first-fake-psk"),
+				Check: resource.ComposeTestCheckFunc(
+					fakeHas(f, "wireless", "home", "key", "first-fake-psk"),
+					resource.TestCheckResourceAttr("openwrt_wireless_iface.home", "key_wo_version", "1"),
+					noSecretInState("first-fake-psk"),
+				),
+			},
+			{
+				// A rotated secret is sent without touching the version.
+				Config: cfg("second-fake-psk"),
+				Check: resource.ComposeTestCheckFunc(
+					fakeHas(f, "wireless", "home", "key", "second-fake-psk"),
+					resource.TestCheckResourceAttr("openwrt_wireless_iface.home", "key_wo_version", "2"),
+					noSecretInState("second-fake-psk"),
+				),
+			},
+			{
+				PreConfig:          func() { f.SetOption("wireless", "home", "key", "tampered") },
+				Config:             cfg("second-fake-psk"),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+			},
+			{
+				Config: cfg("second-fake-psk"),
+				Check:  fakeHas(f, "wireless", "home", "key", "second-fake-psk"),
+			},
+		},
+	})
+}
+
+func TestSecretFromFile(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	keyFile, pskFile, blob := dir+"/wg0.key", dir+"/psk", dir+"/tls.key"
+	writeSecret(t, keyFile, "fake-wg-private-key=\n")
+	writeSecret(t, pskFile, "fake-generic-psk")
+	writeSecret(t, blob, "-----BEGIN FAKE KEY-----\n")
+	cfg := providerBlock(f) + fmt.Sprintf(`
+resource "openwrt_network_interface" "wg0" {
+  section          = "wg0"
+  proto            = "wireguard"
+  private_key_file = %q
+}
+resource "openwrt_uci_section" "radius" {
+  config                  = "wireless"
+  type                    = "wifi-iface"
+  section                 = "radius"
+  options                 = { mode = "ap" }
+  sensitive_options_files = { key = %q }
+}
+resource "openwrt_file" "tls" {
+  path             = "/etc/test-tls.key"
+  mode             = "0600"
+  sensitive_source = %q
+}
+`, keyFile, pskFile, blob)
+	tlsIs := func(want string) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			if got := string(f.Files["/etc/test-tls.key"].Data); got != want {
+				return fmt.Errorf("tls key file = %q", got)
+			}
+			return nil
+		}
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories(),
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeTestCheckFunc(
+					fakeHas(f, "network", "wg0", "private_key", "fake-wg-private-key="),
+					fakeHas(f, "wireless", "radius", "key", "fake-generic-psk"),
+					tlsIs("-----BEGIN FAKE KEY-----\n"),
+					resource.TestCheckNoResourceAttr("openwrt_file.tls", "md5"),
+					noSecretInState("fake-wg-private-key="),
+					noSecretInState("fake-generic-psk"),
+					noSecretInState("BEGIN FAKE KEY"),
+				),
+			},
+			{
+				// sops-nix decrypts rotated secrets; the next apply sends them.
+				PreConfig: func() {
+					writeSecret(t, keyFile, "rotated-wg-private-key=\n")
+					writeSecret(t, pskFile, "rotated-generic-psk")
+					writeSecret(t, blob, "-----BEGIN ROTATED KEY-----\n")
+				},
+				Config: cfg,
+				Check: resource.ComposeTestCheckFunc(
+					fakeHas(f, "network", "wg0", "private_key", "rotated-wg-private-key="),
+					fakeHas(f, "wireless", "radius", "key", "rotated-generic-psk"),
+					tlsIs("-----BEGIN ROTATED KEY-----\n"),
+					resource.TestCheckResourceAttr("openwrt_network_interface.wg0", "private_key_wo_version", "2"),
+					noSecretInState("rotated-wg-private-key="),
+				),
+			},
+			{
+				PreConfig: func() {
+					f.SetOption("wireless", "radius", "key", "tampered")
+					f.Files["/etc/test-tls.key"].Data = []byte("tampered")
+				},
+				Config: cfg,
+				Check: resource.ComposeTestCheckFunc(
+					fakeHas(f, "wireless", "radius", "key", "rotated-generic-psk"),
+					tlsIs("-----BEGIN ROTATED KEY-----\n"),
+				),
+			},
+		},
+	})
+}
+
+func TestWriteOnlyMapKeyRemoved(t *testing.T) {
+	f := newFake(t)
+	cfg := func(wo string) string {
+		return providerBlock(f) + fmt.Sprintf(`
+resource "openwrt_uci_section" "ppp" {
+  config               = "network"
+  type                 = "interface"
+  section              = "ppp"
+  options              = { proto = "pppoe" }
+  sensitive_options_wo = %s
+}
+`, wo)
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories(),
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(`{ password = "fake-ppp-password", auth_secret = "fake-radius-secret" }`),
+				Check: resource.ComposeTestCheckFunc(
+					fakeHas(f, "network", "ppp", "password", "fake-ppp-password"),
+					fakeHas(f, "network", "ppp", "auth_secret", "fake-radius-secret"),
+				),
+			},
+			{
+				Config: cfg(`{ password = "fake-ppp-password" }`),
+				Check:  fakeHas(f, "network", "ppp", "auth_secret", nil),
+			},
+		},
+	})
+}
+
 func TestUCIOrder(t *testing.T) {
 	f := newFake(t)
 	resource.UnitTest(t, resource.TestCase{

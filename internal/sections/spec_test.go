@@ -34,12 +34,12 @@ func TestSpecs(t *testing.T) {
 			if !attrRe.MatchString(a) || reserved[a] || engineAttrs[a] {
 				t.Errorf("%s.%s: bad attribute name %q", s.Name, o.UCI, a)
 			}
-			if attrs[a] || attrs[a+"_wo"] {
+			if attrs[a] || attrs[a+"_wo"] || attrs[a+"_file"] {
 				t.Errorf("%s: duplicate attribute %s", s.Name, a)
 			}
 			attrs[a] = true
 			if o.Sensitive {
-				attrs[a+"_wo"], attrs[a+"_wo_version"] = true, true
+				attrs[a+"_wo"], attrs[a+"_wo_version"], attrs[a+"_file"] = true, true, true
 				if o.Kind != String {
 					t.Errorf("%s.%s: only strings can be sensitive", s.Name, o.UCI)
 				}

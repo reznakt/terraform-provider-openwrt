@@ -3,12 +3,12 @@
 page_title: "openwrt_uci_section Resource - openwrt"
 subcategory: ""
 description: |-
-  Manages any UCI section as a whole. The resource is authoritative: options on the router that are not declared here are removed. Options whose names look like secrets (key, pass, psk, secret, token, auth) belong in sensitive_options or sensitive_options_wo.
+  Manages any UCI section as a whole. The resource is authoritative: options on the router that are not declared here are removed. Options whose names look like secrets (key, pass, psk, secret, token, auth) belong in sensitive_options, sensitive_options_wo or sensitive_options_files.
 ---
 
 # openwrt_uci_section (Resource)
 
-Manages any UCI section as a whole. The resource is authoritative: options on the router that are not declared here are removed. Options whose names look like secrets (`key`, `pass`, `psk`, `secret`, `token`, `auth`) belong in `sensitive_options` or `sensitive_options_wo`.
+Manages any UCI section as a whole. The resource is authoritative: options on the router that are not declared here are removed. Options whose names look like secrets (`key`, `pass`, `psk`, `secret`, `token`, `auth`) belong in `sensitive_options`, `sensitive_options_wo` or `sensitive_options_files`.
 
 ## Example Usage
 
@@ -27,11 +27,26 @@ resource "openwrt_uci_section" "wg0" {
     addresses = ["10.7.0.1/24"]
   }
 
-  # Never stored in state; bump the version to rotate.
+  # Never stored in state; sent again whenever a value changes.
   sensitive_options_wo = {
     private_key = var.wg_private_key
   }
-  sensitive_options_wo_version = 1
+}
+
+# Secrets can also come from local files, e.g. decrypted by sops-nix.
+resource "openwrt_uci_section" "wan_ppp" {
+  config  = "network"
+  type    = "interface"
+  section = "wan"
+
+  options = {
+    proto    = "pppoe"
+    device   = "eth1"
+    username = "fake-isp-user"
+  }
+  sensitive_options_files = {
+    password = "/run/secrets/openwrt/pppoe-password"
+  }
 }
 ```
 
@@ -51,8 +66,9 @@ resource "openwrt_uci_section" "wg0" {
 - `lists` (Map of List of String) List options (`list name 'value'`).
 - `options` (Map of String) Scalar options (`option name 'value'`).
 - `sensitive_options` (Map of String, Sensitive) Secret scalar options. Stored in state but hidden in plans and output.
-- `sensitive_options_wo` (Map of String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Secret scalar options that are never stored in state. Sent when `sensitive_options_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `sensitive_options_wo_version` (Number) Bump to re-send `sensitive_options_wo`. Cleared automatically when the router's values drift.
+- `sensitive_options_files` (Map of String) Secret scalar options read from local files (option name to path; trailing newlines ignored), e.g. secrets decrypted by sops-nix or agenix. Only the paths are stored in state; the values are handled like `sensitive_options_wo`.
+- `sensitive_options_wo` (Map of String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Secret scalar options that are never stored in state. Sent again whenever they change. Requires Terraform/OpenTofu >= 1.11.
+- `sensitive_options_wo_version` (Number) Version of the values sent from `sensitive_options_wo` and `sensitive_options_files`. Leave it unset and the provider bumps it whenever a value changes, a key is added or removed, or the router's values drift; set it to send only on explicit bumps.
 
 ### Read-Only
 

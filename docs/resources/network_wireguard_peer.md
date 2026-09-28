@@ -37,8 +37,9 @@ Manages a `wireguard_<interface>` section in `/etc/config/network`.
 - `extra_options` (Map of String) Additional scalar options not covered by this resource's attributes. Only listed keys are managed.
 - `persistent_keepalive` (Number) Keepalive interval in seconds. (UCI option `persistent_keepalive`.)
 - `preshared_key` (String, Sensitive) Optional preshared key. (UCI option `preshared_key`.)
-- `preshared_key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `preshared_key`: never stored in state or plan. Sent when `preshared_key_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `preshared_key_wo_version` (Number) Bump to send a new `preshared_key_wo`. Also changes when the router's value drifts from the last one sent.
+- `preshared_key_file` (String) Path to a local file holding `preshared_key` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `preshared_key_wo` and sent again whenever the file changes.
+- `preshared_key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `preshared_key`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `preshared_key_wo_version` (Number) Version of the value sent from `preshared_key_wo` or `preshared_key_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.
 - `route_allowed_ips` (Boolean) Create routes for allowed IPs. (UCI option `route_allowed_ips`.)
 
 ### Read-Only

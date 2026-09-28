@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -99,6 +100,53 @@ func (w *woState) fingerprint(value string) string {
 	}
 	h := sha256.Sum256([]byte(w.Salt + "\x00" + value))
 	return hex.EncodeToString(h[:])
+}
+
+// differs reports whether any value is not what was last sent under its key.
+func (w *woState) differs(values map[string]string) bool {
+	for k, v := range values {
+		if h, ok := w.Hashes[k]; !ok || w.fingerprint(v) != h {
+			return true
+		}
+	}
+	return false
+}
+
+// planWOVersion decides the planned *_wo_version. An explicit version is kept
+// as is, with a warning when the value changed but the version did not. A
+// version left out of the configuration is computed: the prior one while the
+// value still matches what was last sent, the next one otherwise, so a
+// rotated secret is sent without bumping anything by hand. set is false when
+// no write-only value is configured, known is false while it is unknown.
+func planWOVersion(configured, prior types.Int64, set, known, changed bool, attr string, diags *diag.Diagnostics) types.Int64 {
+	fresh := prior.IsNull() || prior.IsUnknown()
+	if !configured.IsNull() {
+		if set && known && changed && !fresh && configured.Equal(prior) {
+			diags.AddAttributeWarning(path.Root(attr), "Write-only value changed but its version did not",
+				"The new value will not be sent. Bump "+attr+", or remove it and let the provider track changes.")
+		}
+		return configured
+	}
+	switch {
+	case !set:
+		return types.Int64Null()
+	case !known:
+		return types.Int64Unknown()
+	case fresh || changed:
+		return types.Int64Value(prior.ValueInt64() + 1)
+	}
+	return prior
+}
+
+// readSecretFile reads a secret from a local file, e.g. one decrypted by
+// sops-nix or agenix. Trailing newlines are dropped, as tools like
+// `wg genkey` add one.
+func readSecretFile(name string) (string, error) {
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(b), "\r\n"), nil
 }
 
 // parseBool accepts every spelling UCI consumers accept.

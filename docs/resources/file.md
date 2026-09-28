@@ -3,12 +3,12 @@
 page_title: "openwrt_file Resource - openwrt"
 subcategory: ""
 description: |-
-  Manages a file on the router through rpcd-mod-file. Exactly one of content, content_base64, source or content_wo is required. Drift is detected by comparing the router's MD5 with the expected one, so file bodies are only kept in state when you use content/content_base64. Requires an rpcd ACL granting read/write on the path (see the bootstrap guide).
+  Manages a file on the router through rpcd-mod-file. Exactly one of content, content_base64, source, sensitive_source or content_wo is required. Drift is detected by comparing the router's MD5 with the expected one, so file bodies are only kept in state when you use content/content_base64. With content_wo or sensitive_source not even the MD5 is stored; a salted fingerprint in private state detects drift instead. Requires an rpcd ACL granting read/write on the path (see the bootstrap guide).
 ---
 
 # openwrt_file (Resource)
 
-Manages a file on the router through rpcd-mod-file. Exactly one of `content`, `content_base64`, `source` or `content_wo` is required. Drift is detected by comparing the router's MD5 with the expected one, so file bodies are only kept in state when you use `content`/`content_base64`. Requires an rpcd ACL granting read/write on the path (see the bootstrap guide).
+Manages a file on the router through rpcd-mod-file. Exactly one of `content`, `content_base64`, `source`, `sensitive_source` or `content_wo` is required. Drift is detected by comparing the router's MD5 with the expected one, so file bodies are only kept in state when you use `content`/`content_base64`. With `content_wo` or `sensitive_source` not even the MD5 is stored; a salted fingerprint in private state detects drift instead. Requires an rpcd ACL granting read/write on the path (see the bootstrap guide).
 
 ## Example Usage
 
@@ -18,12 +18,20 @@ resource "openwrt_file" "banner" {
   content = "Managed by OpenTofu\n"
 }
 
-# Secrets: write-only content, only a salted fingerprint is kept.
+# Secrets: write-only content, only a salted fingerprint is kept. It is
+# uploaded again whenever var.tls_key_pem changes.
 resource "openwrt_file" "tls_key" {
-  path               = "/etc/uhttpd.key"
-  mode               = "0600"
-  content_wo         = var.tls_key_pem
-  content_wo_version = 1
+  path       = "/etc/uhttpd.key"
+  mode       = "0600"
+  content_wo = var.tls_key_pem
+}
+
+# Or upload a local secret file, e.g. one decrypted by sops-nix. Only the
+# path is kept in state.
+resource "openwrt_file" "wg_key" {
+  path             = "/etc/wireguard/wg0.key"
+  mode             = "0600"
+  sensitive_source = "/run/secrets/openwrt/wg0-key"
 }
 ```
 
@@ -40,12 +48,13 @@ resource "openwrt_file" "tls_key" {
 
 - `content` (String, Sensitive) UTF-8 content (stored in state, hidden in plans).
 - `content_base64` (String, Sensitive) Base64 content for binary files (stored in state, hidden in plans).
-- `content_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only content, never stored in state or plan. Sent when `content_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `content_wo_version` (Number) Bump to re-send `content_wo`. Cleared automatically when the file on the router changes.
+- `content_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only content, never stored in state or plan. Uploaded again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `content_wo_version` (Number) Version of the content sent from `content_wo` or `sensitive_source`. Leave it unset and the provider bumps it whenever the content changes or the file on the router drifts; set it to upload only on explicit bumps.
 - `mode` (String) Octal permission bits. Default `0644`; use `0600` for secrets.
-- `source` (String) Local file to upload. Only its MD5 is kept in state.
+- `sensitive_source` (String) Local secret file to upload, e.g. one decrypted by sops-nix or agenix. Only the path is kept in state, not even the MD5; the file is uploaded again whenever it changes.
+- `source` (String) Local file to upload. Only its MD5 is kept in state; use `sensitive_source` for secrets.
 
 ### Read-Only
 
 - `id` (String) The ID of this resource.
-- `md5` (String) MD5 of the file on the router (null with `content_wo`, so no fingerprint of a secret ends up in state).
+- `md5` (String) MD5 of the file on the router (null with `content_wo` or `sensitive_source`, so no fingerprint of a secret ends up in state).

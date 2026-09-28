@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -51,6 +50,7 @@ type sectionResource struct {
 var (
 	_ resource.ResourceWithImportState    = (*sectionResource)(nil)
 	_ resource.ResourceWithValidateConfig = (*sectionResource)(nil)
+	_ resource.ResourceWithModifyPlan     = (*sectionResource)(nil)
 )
 
 func (r *sectionResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -107,16 +107,19 @@ func (r *sectionResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				d += " One of: `" + strings.Join(o.Enum, "`, `") + "`."
 			}
 			if o.Sensitive {
-				v = append(v, stringvalidator.ConflictsWith(path.MatchRoot(a+"_wo")))
+				v = append(v, stringvalidator.ConflictsWith(path.MatchRoot(a+"_wo"), path.MatchRoot(a+"_file")))
 				attrs[a+"_wo"] = schema.StringAttribute{
 					Optional: true, Sensitive: true, WriteOnly: true,
-					Description: "Write-only variant of `" + a + "`: never stored in state or plan. Sent when `" + a + "_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.",
-					Validators:  []validator.String{stringvalidator.AlsoRequires(path.MatchRoot(a + "_wo_version"))},
+					Description: "Write-only variant of `" + a + "`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.",
+					Validators:  []validator.String{stringvalidator.ConflictsWith(path.MatchRoot(a + "_file"))},
+				}
+				attrs[a+"_file"] = schema.StringAttribute{
+					Optional:    true,
+					Description: "Path to a local file holding `" + a + "` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `" + a + "_wo` and sent again whenever the file changes.",
 				}
 				attrs[a+"_wo_version"] = schema.Int64Attribute{
-					Optional:    true,
-					Description: "Bump to send a new `" + a + "_wo`. Also changes when the router's value drifts from the last one sent.",
-					Validators:  []validator.Int64{int64validator.AlsoRequires(path.MatchRoot(a + "_wo"))},
+					Optional: true, Computed: true,
+					Description: "Version of the value sent from `" + a + "_wo` or `" + a + "_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.",
 				}
 			}
 			attrs[a] = schema.StringAttribute{Required: o.Required, Optional: !o.Required, Sensitive: o.Sensitive, Description: d, Validators: v}
@@ -169,6 +172,44 @@ func (r *sectionResource) ValidateConfig(ctx context.Context, req resource.Valid
 	for k := range lists {
 		check("extra_lists", k)
 	}
+	for _, o := range r.spec.Options {
+		if !o.Sensitive {
+			continue
+		}
+		a := o.AttrName()
+		var ver types.Int64
+		var wo, file types.String
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(a+"_wo_version"), &ver)...)
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(a+"_wo"), &wo)...)
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(a+"_file"), &file)...)
+		if !ver.IsNull() && wo.IsNull() && file.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root(a+"_wo_version"), "Missing write-only value",
+				a+"_wo_version needs "+a+"_wo or "+a+"_file.")
+		}
+	}
+}
+
+// woValue returns the write-only value of o from the configuration, taken
+// from <attr>_wo or read from <attr>_file.
+func woValue(ctx context.Context, config getter, o sections.Option) (value string, set, known bool, diags diag.Diagnostics) {
+	a := o.AttrName()
+	var wo, file types.String
+	diags.Append(config.GetAttribute(ctx, path.Root(a+"_wo"), &wo)...)
+	diags.Append(config.GetAttribute(ctx, path.Root(a+"_file"), &file)...)
+	switch {
+	case wo.IsUnknown() || file.IsUnknown():
+		return "", true, false, diags
+	case !wo.IsNull():
+		return wo.ValueString(), true, true, diags
+	case !file.IsNull():
+		v, err := readSecretFile(file.ValueString())
+		if err != nil {
+			diags.AddAttributeError(path.Root(a+"_file"), "Cannot read secret file", err.Error())
+			return "", true, false, diags
+		}
+		return v, true, true, diags
+	}
+	return "", false, true, diags
 }
 
 func (r *sectionResource) configName() string { return r.spec.Config }
@@ -187,11 +228,13 @@ type desired struct {
 	set   uci.Values
 	unset []string
 	wo    map[string]string // uci option -> write-only value being sent
+	// versions settles *_wo_version attributes that were unknown in the plan.
+	versions map[string]int64
 }
 
 func (r *sectionResource) desired(ctx context.Context, plan getter, config getter, prior getter) (*desired, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	d := &desired{set: uci.Values{}, wo: map[string]string{}}
+	d := &desired{set: uci.Values{}, wo: map[string]string{}, versions: map[string]int64{}}
 	for _, o := range r.spec.Options {
 		a := o.AttrName()
 		if o.Sensitive {
@@ -202,15 +245,21 @@ func (r *sectionResource) desired(ctx context.Context, plan getter, config gette
 				if prior != nil {
 					diags.Append(prior.GetAttribute(ctx, path.Root(a+"_wo_version"), &prev)...)
 				}
-				if prior == nil || !prev.Equal(ver) {
-					var wo types.String
-					diags.Append(config.GetAttribute(ctx, path.Root(a+"_wo"), &wo)...)
-					if wo.IsNull() || wo.IsUnknown() {
-						diags.AddAttributeError(path.Root(a+"_wo"), "Missing write-only value", a+"_wo must be set when "+a+"_wo_version is set.")
+				if ver.IsUnknown() {
+					// The value was unknown at plan time: send it and settle the version now.
+					d.versions[a+"_wo_version"] = prev.ValueInt64() + 1
+				}
+				if prior == nil || ver.IsUnknown() || !prev.Equal(ver) {
+					v, set, known, dg := woValue(ctx, config, o)
+					diags.Append(dg...)
+					if !set || !known {
+						if !dg.HasError() {
+							diags.AddAttributeError(path.Root(a+"_wo"), "Missing write-only value", a+"_wo or "+a+"_file must be set when "+a+"_wo_version is set.")
+						}
 						continue
 					}
-					d.set[o.UCI] = wo.ValueString()
-					d.wo[o.UCI] = wo.ValueString()
+					d.set[o.UCI] = v
+					d.wo[o.UCI] = v
 				}
 				continue
 			}
@@ -253,6 +302,12 @@ func (r *sectionResource) desired(ctx context.Context, plan getter, config gette
 		}
 	}
 	return d, diags
+}
+
+func setVersions(ctx context.Context, d *desired, st *tfsdk.State, diags *diag.Diagnostics) {
+	for a, v := range d.versions {
+		diags.Append(st.SetAttribute(ctx, path.Root(a), v)...)
+	}
 }
 
 // readAttr reads attribute a of the given kind and encodes it for UCI.
@@ -342,6 +397,7 @@ func (r *sectionResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	resp.State.Raw = req.Plan.Raw.Copy()
+	setVersions(ctx, d, &resp.State, &resp.Diagnostics)
 	wo, diags := loadWO(ctx, nil)
 	resp.Diagnostics.Append(diags...)
 	for k, v := range d.wo {
@@ -406,6 +462,7 @@ func (r *sectionResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 	}
 	resp.State.Raw = req.Plan.Raw.Copy()
+	setVersions(ctx, d, &resp.State, &resp.Diagnostics)
 	r.refresh(ctx, name, &resp.State, wo, &resp.Diagnostics)
 	resp.Diagnostics.Append(wo.save(ctx, resp.Private)...)
 }
@@ -577,4 +634,25 @@ func decode(s *uci.Section, o sections.Option) (attr.Value, error) {
 
 func (r *sectionResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	planID(ctx, r.spec.Config, req, resp)
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	wo, diags := loadWO(ctx, req.Private)
+	resp.Diagnostics.Append(diags...)
+	for _, o := range r.spec.Options {
+		if !o.Sensitive {
+			continue
+		}
+		a := o.AttrName() + "_wo_version"
+		configured, prior := types.Int64Null(), types.Int64Null()
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(a), &configured)...)
+		if !req.State.Raw.IsNull() {
+			resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root(a), &prior)...)
+		}
+		v, set, known, dg := woValue(ctx, req.Config, o)
+		resp.Diagnostics.Append(dg...)
+		changed := set && known && wo.differs(map[string]string{o.UCI: v})
+		ver := planWOVersion(configured, prior, set, known, changed, a, &resp.Diagnostics)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(a), ver)...)
+	}
 }

@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
-	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -33,6 +31,7 @@ type uciSectionResource struct{ c *rpc.Client }
 var (
 	_ resource.ResourceWithImportState    = (*uciSectionResource)(nil)
 	_ resource.ResourceWithValidateConfig = (*uciSectionResource)(nil)
+	_ resource.ResourceWithModifyPlan     = (*uciSectionResource)(nil)
 )
 
 type uciSectionModel struct {
@@ -45,6 +44,7 @@ type uciSectionModel struct {
 	SensitiveOptions   types.Map    `tfsdk:"sensitive_options"`
 	SensitiveWO        types.Map    `tfsdk:"sensitive_options_wo"`
 	SensitiveWOVersion types.Int64  `tfsdk:"sensitive_options_wo_version"`
+	SensitiveFiles     types.Map    `tfsdk:"sensitive_options_files"`
 }
 
 func (r *uciSectionResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -58,7 +58,7 @@ func (r *uciSectionResource) Configure(_ context.Context, req resource.Configure
 func (r *uciSectionResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	nameV := []validator.String{stringvalidator.RegexMatches(sectionNameRe, "must contain only letters, digits and underscores")}
 	desc := "Manages any UCI section as a whole. The resource is authoritative: options on the router that are not declared here are removed. " +
-		"Options whose names look like secrets (`key`, `pass`, `psk`, `secret`, `token`, `auth`) belong in `sensitive_options` or `sensitive_options_wo`."
+		"Options whose names look like secrets (`key`, `pass`, `psk`, `secret`, `token`, `auth`) belong in `sensitive_options`, `sensitive_options_wo` or `sensitive_options_files`."
 	resp.Schema = schema.Schema{
 		Description: desc, MarkdownDescription: desc,
 		Attributes: map[string]schema.Attribute{
@@ -93,12 +93,15 @@ func (r *uciSectionResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			},
 			"sensitive_options_wo": schema.MapAttribute{
 				ElementType: types.StringType, Optional: true, Sensitive: true, WriteOnly: true,
-				Description: "Secret scalar options that are never stored in state. Sent when `sensitive_options_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.",
-				Validators:  []validator.Map{mapvalidator.AlsoRequires(path.MatchRoot("sensitive_options_wo_version"))},
+				Description: "Secret scalar options that are never stored in state. Sent again whenever they change. Requires Terraform/OpenTofu >= 1.11.",
+			},
+			"sensitive_options_files": schema.MapAttribute{
+				ElementType: types.StringType, Optional: true,
+				Description: "Secret scalar options read from local files (option name to path; trailing newlines ignored), e.g. secrets decrypted by sops-nix or agenix. Only the paths are stored in state; the values are handled like `sensitive_options_wo`.",
 			},
 			"sensitive_options_wo_version": schema.Int64Attribute{
-				Optional: true, Description: "Bump to re-send `sensitive_options_wo`. Cleared automatically when the router's values drift.",
-				Validators: []validator.Int64{int64validator.AlsoRequires(path.MatchRoot("sensitive_options_wo"))},
+				Optional: true, Computed: true,
+				Description: "Version of the values sent from `sensitive_options_wo` and `sensitive_options_files`. Leave it unset and the provider bumps it whenever a value changes, a key is added or removed, or the router's values drift; set it to send only on explicit bumps.",
 			},
 		},
 	}
@@ -117,6 +120,7 @@ func (r *uciSectionResource) ValidateConfig(ctx context.Context, req resource.Va
 	}{
 		{"options", mapKeys(m.Options)}, {"lists", mapKeys(m.Lists)},
 		{"sensitive_options", mapKeys(m.SensitiveOptions)}, {"sensitive_options_wo", mapKeys(m.SensitiveWO)},
+		{"sensitive_options_files", mapKeys(m.SensitiveFiles)},
 	} {
 		for _, k := range part.keys {
 			p := path.Root(part.attr).AtMapKey(k)
@@ -133,6 +137,44 @@ func (r *uciSectionResource) ValidateConfig(ctx context.Context, req resource.Va
 			}
 		}
 	}
+	if !m.SensitiveWOVersion.IsNull() && m.SensitiveWO.IsNull() && m.SensitiveFiles.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("sensitive_options_wo_version"), "Missing write-only values",
+			"sensitive_options_wo_version needs sensitive_options_wo or sensitive_options_files.")
+	}
+}
+
+// woValues merges sensitive_options_wo with the contents of
+// sensitive_options_files. set is false when neither is configured.
+func woValues(ctx context.Context, config getter) (values map[string]string, set, known bool, diags diag.Diagnostics) {
+	var wo, files types.Map
+	diags.Append(config.GetAttribute(ctx, path.Root("sensitive_options_wo"), &wo)...)
+	diags.Append(config.GetAttribute(ctx, path.Root("sensitive_options_files"), &files)...)
+	if wo.IsNull() && files.IsNull() {
+		return nil, false, true, diags
+	}
+	values = map[string]string{}
+	for _, m := range []types.Map{wo, files} {
+		if m.IsUnknown() {
+			return nil, true, false, diags
+		}
+		for _, v := range m.Elements() {
+			if v.IsUnknown() {
+				return nil, true, false, diags
+			}
+		}
+	}
+	for k, v := range wo.Elements() {
+		values[k] = v.(types.String).ValueString()
+	}
+	for k, v := range files.Elements() {
+		content, err := readSecretFile(v.(types.String).ValueString())
+		if err != nil {
+			diags.AddAttributeError(path.Root("sensitive_options_files").AtMapKey(k), "Cannot read secret file", err.Error())
+			return nil, true, false, diags
+		}
+		values[k] = content
+	}
+	return values, true, true, diags
 }
 
 func mapKeys(m types.Map) []string {
@@ -150,18 +192,21 @@ func mapKeys(m types.Map) []string {
 // uciDesired is the full desired content of the section.
 type uciDesired struct {
 	set    uci.Values
-	woKeys map[string]bool   // keys owned by sensitive_options_wo
+	woKeys map[string]bool   // keys owned by sensitive_options_wo/_files
 	wo     map[string]string // write-only values being sent now
+	// version settles sensitive_options_wo_version when it was unknown in the plan.
+	version *int64
 }
 
 func (r *uciSectionResource) desired(ctx context.Context, plan, config getter, prior getter) (*uciDesired, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	var opts, sens, woVals map[string]string
+	var opts, sens map[string]string
 	var lists map[string][]string
 	diags.Append(plan.GetAttribute(ctx, path.Root("options"), &opts)...)
 	diags.Append(plan.GetAttribute(ctx, path.Root("lists"), &lists)...)
 	diags.Append(plan.GetAttribute(ctx, path.Root("sensitive_options"), &sens)...)
-	diags.Append(config.GetAttribute(ctx, path.Root("sensitive_options_wo"), &woVals)...)
+	woVals, _, _, dg := woValues(ctx, config)
+	diags.Append(dg...)
 
 	d := &uciDesired{set: uci.Values{}, woKeys: map[string]bool{}, wo: map[string]string{}}
 	for k, v := range opts {
@@ -180,7 +225,12 @@ func (r *uciSectionResource) desired(ctx context.Context, plan, config getter, p
 	if prior != nil {
 		diags.Append(prior.GetAttribute(ctx, path.Root("sensitive_options_wo_version"), &prev)...)
 	}
-	send := !ver.IsNull() && (prior == nil || !prev.Equal(ver))
+	if ver.IsUnknown() {
+		// The values were unknown at plan time: send them and settle the version now.
+		n := prev.ValueInt64() + 1
+		d.version = &n
+	}
+	send := !ver.IsNull() && (prior == nil || ver.IsUnknown() || !prev.Equal(ver))
 	for k, v := range woVals {
 		d.woKeys[k] = true
 		if send {
@@ -242,6 +292,9 @@ func (r *uciSectionResource) Create(ctx context.Context, req resource.CreateRequ
 		wo.Hashes[k] = wo.fingerprint(v)
 	}
 	resp.State.Raw = req.Plan.Raw.Copy()
+	if d.version != nil {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("sensitive_options_wo_version"), *d.version)...)
+	}
 	r.refresh(ctx, cfg, name, &resp.State, wo, &resp.Diagnostics)
 	resp.Diagnostics.Append(wo.save(ctx, resp.Private)...)
 }
@@ -293,6 +346,9 @@ func (r *uciSectionResource) Update(ctx context.Context, req resource.UpdateRequ
 		wo.Hashes[k] = wo.fingerprint(v)
 	}
 	resp.State.Raw = req.Plan.Raw.Copy()
+	if d.version != nil {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("sensitive_options_wo_version"), *d.version)...)
+	}
 	r.refresh(ctx, cfg, name, &resp.State, wo, &resp.Diagnostics)
 	resp.Diagnostics.Append(wo.save(ctx, resp.Private)...)
 }
@@ -412,4 +468,25 @@ func setMap(ctx context.Context, st *tfsdk.State, attr string, m map[string]stri
 
 func (r *uciSectionResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	planID(ctx, "", req, resp)
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	const a = "sensitive_options_wo_version"
+	wo, diags := loadWO(ctx, req.Private)
+	resp.Diagnostics.Append(diags...)
+	configured, prior := types.Int64Null(), types.Int64Null()
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(a), &configured)...)
+	if !req.State.Raw.IsNull() {
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root(a), &prior)...)
+	}
+	values, set, known, dg := woValues(ctx, req.Config)
+	resp.Diagnostics.Append(dg...)
+	changed := set && known && wo.differs(values)
+	for k := range wo.Hashes {
+		if _, ok := values[k]; !ok && known {
+			changed = true // a key left the write-only maps
+		}
+	}
+	ver := planWOVersion(configured, prior, set, known, changed, a, &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(a), ver)...)
 }

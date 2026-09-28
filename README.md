@@ -86,7 +86,6 @@ resource "openwrt_wireless_iface" "iot" {
   ssid           = "iot"
   encryption     = "sae-mixed"
   key_wo         = var.iot_wifi_key # never stored in state
-  key_wo_version = 1
 }
 ```
 
@@ -151,10 +150,11 @@ All names are prefixed with `openwrt_`. Full reference in the [documentation](ht
 | You write | Plan output | State | Drift detection |
 |---|:---:|:---:|---|
 | `key = var.psk` | hidden | stored | exact |
-| `key_wo = var.psk` + `key_wo_version` | — | **never** | salted fingerprint in private state |
+| `key_wo = var.psk` | — | **never** | salted fingerprint in private state |
+| `key_file = "/run/secrets/psk"` (sops-nix, agenix) | — | path only | salted fingerprint in private state |
 | `ephemeral "openwrt_file"` | — | **never** | read-only |
 
-Secret-looking options are routed to `sensitive_options` in generic sections and withheld from data sources, provider logs are masked even at `TRACE`, and the test suite checks all of it. See the [secrets guide](https://reznakt.github.io/terraform-provider-openwrt/guides/secrets/).
+Write-only and file-based secrets are sent again whenever they change, with no version to bump. Secret-looking options are routed to `sensitive_options` in generic sections and withheld from data sources, provider logs are masked even at `TRACE`, and the test suite checks all of it. See the [secrets guide](https://reznakt.github.io/terraform-provider-openwrt/guides/secrets/).
 
 ## Development
 

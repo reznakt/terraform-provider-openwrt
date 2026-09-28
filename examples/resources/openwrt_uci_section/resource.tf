@@ -12,9 +12,24 @@ resource "openwrt_uci_section" "wg0" {
     addresses = ["10.7.0.1/24"]
   }
 
-  # Never stored in state; bump the version to rotate.
+  # Never stored in state; sent again whenever a value changes.
   sensitive_options_wo = {
     private_key = var.wg_private_key
   }
-  sensitive_options_wo_version = 1
+}
+
+# Secrets can also come from local files, e.g. decrypted by sops-nix.
+resource "openwrt_uci_section" "wan_ppp" {
+  config  = "network"
+  type    = "interface"
+  section = "wan"
+
+  options = {
+    proto    = "pppoe"
+    device   = "eth1"
+    username = "fake-isp-user"
+  }
+  sensitive_options_files = {
+    password = "/run/secrets/openwrt/pppoe-password"
+  }
 }

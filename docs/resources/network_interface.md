@@ -63,12 +63,14 @@ Manages a `interface` section in `/etc/config/network`.
 - `nohostroute` (Boolean) WireGuard: do not add routes to peer endpoints. (UCI option `nohostroute`.)
 - `norelease` (Boolean) Do not send DHCP release on shutdown. (UCI option `norelease`.)
 - `password` (String, Sensitive) PPP password. (UCI option `password`.)
-- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `password`: never stored in state or plan. Sent when `password_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `password_wo_version` (Number) Bump to send a new `password_wo`. Also changes when the router's value drifts from the last one sent.
+- `password_file` (String) Path to a local file holding `password` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `password_wo` and sent again whenever the file changes.
+- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `password`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `password_wo_version` (Number) Version of the value sent from `password_wo` or `password_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.
 - `peerdns` (Boolean) Use DNS servers announced by the peer. (UCI option `peerdns`.)
 - `private_key` (String, Sensitive) WireGuard private key. (UCI option `private_key`.)
-- `private_key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `private_key`: never stored in state or plan. Sent when `private_key_wo_version` changes. Requires Terraform/OpenTofu >= 1.11.
-- `private_key_wo_version` (Number) Bump to send a new `private_key_wo`. Also changes when the router's value drifts from the last one sent.
+- `private_key_file` (String) Path to a local file holding `private_key` (trailing newlines ignored), e.g. a secret decrypted by sops-nix or agenix. Only the path is stored in state; the value is handled like `private_key_wo` and sent again whenever the file changes.
+- `private_key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `private_key`: never stored in state or plan. Sent again whenever it changes. Requires Terraform/OpenTofu >= 1.11.
+- `private_key_wo_version` (Number) Version of the value sent from `private_key_wo` or `private_key_file`. Leave it unset and the provider bumps it whenever the value changes or the router's value drifts; set it to send only on explicit bumps.
 - `reqaddress` (String) DHCPv6 address request mode. (UCI option `reqaddress`.) One of: `try`, `force`, `none`.
 - `reqprefix` (String) DHCPv6 requested prefix length, `auto` or `no`. (UCI option `reqprefix`.)
 - `service` (String) PPPoE service name / 3G service type. (UCI option `service`.)
