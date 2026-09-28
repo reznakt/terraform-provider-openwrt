@@ -448,6 +448,79 @@ resource "openwrt_wireless_iface" "home" {
 	})
 }
 
+// A version only known at apply must end up in state as configured, or the
+// next plan shows a diff and sends the secret again.
+func TestWriteOnlyVersionUnknownAtPlan(t *testing.T) {
+	f := newFake(t)
+	cfg := func(ver int, psk string) string {
+		return providerBlock(f) + fmt.Sprintf(`
+# The id, a UUID, exists only after apply; replacing the resource makes it
+# unknown again.
+resource "terraform_data" "seed" {
+  triggers_replace = %d
+}
+locals {
+  ver = %[1]d + length(terraform_data.seed.id) - 36
+}
+resource "openwrt_wireless_iface" "home" {
+  section        = "home"
+  device         = "radio0"
+  mode           = "ap"
+  ssid           = "home"
+  key_wo         = %[2]q
+  key_wo_version = local.ver
+}
+resource "openwrt_uci_section" "radius" {
+  config                       = "wireless"
+  type                         = "wifi-iface"
+  section                      = "radius"
+  options                      = { mode = "ap" }
+  sensitive_options_wo         = { key = %[2]q }
+  sensitive_options_wo_version = local.ver
+}
+resource "openwrt_file" "tls" {
+  path               = "/etc/test-tls.key"
+  content_wo         = %[2]q
+  content_wo_version = local.ver
+}
+`, ver, psk)
+	}
+	versions := func(want string) resource.TestCheckFunc {
+		return resource.ComposeTestCheckFunc(
+			resource.TestCheckResourceAttr("openwrt_wireless_iface.home", "key_wo_version", want),
+			resource.TestCheckResourceAttr("openwrt_uci_section.radius", "sensitive_options_wo_version", want),
+			resource.TestCheckResourceAttr("openwrt_file.tls", "content_wo_version", want),
+		)
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories(),
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(7, "first-fake-psk"),
+				Check: resource.ComposeTestCheckFunc(
+					versions("7"),
+					fakeHas(f, "wireless", "home", "key", "first-fake-psk"),
+					fakeHas(f, "wireless", "radius", "key", "first-fake-psk"),
+				),
+			},
+			{
+				Config: cfg(9, "second-fake-psk"),
+				Check: resource.ComposeTestCheckFunc(
+					versions("9"),
+					fakeHas(f, "wireless", "home", "key", "second-fake-psk"),
+					fakeHas(f, "wireless", "radius", "key", "second-fake-psk"),
+					func(*terraform.State) error {
+						if got := string(f.Files["/etc/test-tls.key"].Data); got != "second-fake-psk" {
+							return fmt.Errorf("tls key file = %q", got)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
 func TestSecretFromFile(t *testing.T) {
 	f := newFake(t)
 	dir := t.TempDir()
