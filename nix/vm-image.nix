@@ -29,10 +29,12 @@ stdenvNoCC.mkDerivation {
     e2fsprogs
   ];
 
-  acls = [
-    ../router/terraform-acl.json
-    ../router/terraform-acl-exec.json
-  ];
+  # Every ACL file, so the tests can pick groups per login.
+  acls = map (f: ../router + "/${f}") (
+    builtins.filter (f: builtins.match "terraform-acl.*\\.json" f != null) (
+      builtins.attrNames (builtins.readDir ../router)
+    )
+  );
 
   buildPhase = ''
     runHook preBuild

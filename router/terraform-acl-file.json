@@ -1,0 +1,21 @@
+{
+	"terraform-file": {
+		"description": "terraform-provider-openwrt: read and write files below /etc (openwrt_file and the file data/ephemeral sources). Equivalent to root: /etc/init.d, /etc/rc.local and /etc/shadow are below /etc.",
+		"read": {
+			"ubus": {
+				"file": [ "read", "list", "stat", "md5" ]
+			},
+			"file": {
+				"/etc/*": [ "read", "list" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"file": [ "write", "remove" ]
+			},
+			"file": {
+				"/etc/*": [ "write" ]
+			}
+		}
+	}
+}

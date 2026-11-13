@@ -1,0 +1,11 @@
+{
+	"terraform-uci-any": {
+		"description": "terraform-provider-openwrt: read/write every config, for openwrt_uci_section and openwrt_uci_order on configs without a file of their own. Equivalent to root: it includes 'rpcd'.",
+		"read": {
+			"uci": [ "*" ]
+		},
+		"write": {
+			"uci": [ "*" ]
+		}
+	}
+}

@@ -1,0 +1,11 @@
+{
+	"terraform-uci-network": {
+		"description": "terraform-provider-openwrt: read/write the 'network' config (network_* resources).",
+		"read": {
+			"uci": [ "network" ]
+		},
+		"write": {
+			"uci": [ "network" ]
+		}
+	}
+}

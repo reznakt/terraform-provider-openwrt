@@ -1,0 +1,11 @@
+{
+	"terraform-uci-qos": {
+		"description": "terraform-provider-openwrt: read/write the 'qos' config (qos_* resources).",
+		"read": {
+			"uci": [ "qos" ]
+		},
+		"write": {
+			"uci": [ "qos" ]
+		}
+	}
+}

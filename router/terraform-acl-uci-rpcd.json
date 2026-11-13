@@ -1,0 +1,11 @@
+{
+	"terraform-uci-rpcd": {
+		"description": "terraform-provider-openwrt: read/write the 'rpcd' config (openwrt_rpcd, openwrt_rpcd_login). Equivalent to root: a login with full access can be added.",
+		"read": {
+			"uci": [ "rpcd" ]
+		},
+		"write": {
+			"uci": [ "rpcd" ]
+		}
+	}
+}

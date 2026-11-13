@@ -35,13 +35,15 @@ if a plan cuts you off, the router quietly puts itself back.
 
 ## Quick start
 
-**1. Give the provider a login on the router** (optional but recommended; `root` works too):
+**1. Give the provider a login on the router** (optional but recommended; `root` works too). Copy the base ACL plus one file per feature you use, e.g. for the network and firewall resources below:
 
 ```sh
-scp -O router/terraform-acl.json root@192.168.1.1:/usr/share/rpcd/acl.d/terraform.json
+cd router
+scp -O terraform-acl.json terraform-acl-uci-network.json terraform-acl-uci-firewall.json \
+  root@192.168.1.1:/usr/share/rpcd/acl.d/
 ```
 
-Then add an rpcd login for it as described in the [router setup guide](https://reznakt.github.io/terraform-provider-openwrt/guides/router-setup/).
+Then add an rpcd login for it as described in the [router setup guide](https://reznakt.github.io/terraform-provider-openwrt/guides/router-setup/), which also lists which ACL file each resource needs.
 
 **2. Configure the provider:**
 

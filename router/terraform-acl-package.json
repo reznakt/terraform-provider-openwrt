@@ -1,0 +1,23 @@
+{
+	"terraform-package": {
+		"description": "terraform-provider-openwrt: install and remove packages through the LuCI package-manager helper (openwrt_package, packages data source). Equivalent to root: a package can run any install script.",
+		"read": {
+			"ubus": {
+				"file": [ "stat" ]
+			},
+			"file": {
+				"/usr/libexec/package-manager-call": [ "list" ],
+				"/usr/libexec/opkg-call": [ "list" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"file": [ "exec" ]
+			},
+			"file": {
+				"/usr/libexec/package-manager-call": [ "exec" ],
+				"/usr/libexec/opkg-call": [ "exec" ]
+			}
+		}
+	}
+}

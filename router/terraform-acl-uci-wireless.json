@@ -1,0 +1,11 @@
+{
+	"terraform-uci-wireless": {
+		"description": "terraform-provider-openwrt: read/write the 'wireless' config (wireless_* resources).",
+		"read": {
+			"uci": [ "wireless" ]
+		},
+		"write": {
+			"uci": [ "wireless" ]
+		}
+	}
+}
