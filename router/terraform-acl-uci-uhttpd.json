@@ -1,0 +1,11 @@
+{
+	"terraform-uci-uhttpd": {
+		"description": "terraform-provider-openwrt: read/write the 'uhttpd' config (openwrt_uhttpd, openwrt_uhttpd_cert). Privileged: uhttpd can be pointed at other CGI interpreters, handlers and document roots.",
+		"read": {
+			"uci": [ "uhttpd" ]
+		},
+		"write": {
+			"uci": [ "uhttpd" ]
+		}
+	}
+}

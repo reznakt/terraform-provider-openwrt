@@ -1,0 +1,11 @@
+{
+	"terraform-uci-sqm": {
+		"description": "terraform-provider-openwrt: read/write the 'sqm' config (openwrt_sqm_queue).",
+		"read": {
+			"uci": [ "sqm" ]
+		},
+		"write": {
+			"uci": [ "sqm" ]
+		}
+	}
+}

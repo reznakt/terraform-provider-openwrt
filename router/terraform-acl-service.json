@@ -1,0 +1,15 @@
+{
+	"terraform-service": {
+		"description": "terraform-provider-openwrt: enable, disable, start and stop init scripts (openwrt_service). rpcd cannot limit this to certain services, so it covers all of them.",
+		"read": {
+			"ubus": {
+				"rc": [ "list" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"rc": [ "init" ]
+			}
+		}
+	}
+}

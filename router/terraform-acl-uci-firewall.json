@@ -1,0 +1,11 @@
+{
+	"terraform-uci-firewall": {
+		"description": "terraform-provider-openwrt: read/write the 'firewall' config (firewall_* resources). Privileged: firewall includes make fw4 load nftables files or run scripts by path.",
+		"read": {
+			"uci": [ "firewall" ]
+		},
+		"write": {
+			"uci": [ "firewall" ]
+		}
+	}
+}

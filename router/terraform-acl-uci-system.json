@@ -1,0 +1,11 @@
+{
+	"terraform-uci-system": {
+		"description": "terraform-provider-openwrt: read/write the 'system' config (system, system_ntp, system_led).",
+		"read": {
+			"uci": [ "system" ]
+		},
+		"write": {
+			"uci": [ "system" ]
+		}
+	}
+}

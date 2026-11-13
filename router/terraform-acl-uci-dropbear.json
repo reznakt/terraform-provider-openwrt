@@ -1,0 +1,11 @@
+{
+	"terraform-uci-dropbear": {
+		"description": "terraform-provider-openwrt: read/write the 'dropbear' config (openwrt_dropbear).",
+		"read": {
+			"uci": [ "dropbear" ]
+		},
+		"write": {
+			"uci": [ "dropbear" ]
+		}
+	}
+}

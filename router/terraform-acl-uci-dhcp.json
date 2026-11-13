@@ -1,0 +1,11 @@
+{
+	"terraform-uci-dhcp": {
+		"description": "terraform-provider-openwrt: read/write the 'dhcp' config (dhcp_* resources).",
+		"read": {
+			"uci": [ "dhcp" ]
+		},
+		"write": {
+			"uci": [ "dhcp" ]
+		}
+	}
+}
